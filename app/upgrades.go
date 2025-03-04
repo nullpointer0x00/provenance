@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	storetypes "cosmossdk.io/store/types"
 	upgradetypes "cosmossdk.io/x/upgrade/types"
@@ -48,6 +50,10 @@ var upgrades = map[string]appUpgrade{
 				return nil, err
 			}
 			removeInactiveValidatorDelegations(ctx, app)
+
+			// Write events to file
+			writeUpgradeEventsToFile(ctx, "upgrade_events.log")
+
 			return vm, nil
 		},
 	},
@@ -62,9 +68,37 @@ var upgrades = map[string]appUpgrade{
 				return nil, err
 			}
 			removeInactiveValidatorDelegations(ctx, app)
+
+			// Write events to file
+			writeUpgradeEventsToFile(ctx, "upgrade_events.log")
+
 			return vm, nil
 		},
 	},
+}
+
+// writeUpgradeEventsToFile writes all events from ctx.EventManager().Events() to a file.
+func writeUpgradeEventsToFile(ctx sdk.Context, filename string) {
+	filePath := filepath.Join(".", filename) // Save file in the current directory
+	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		fmt.Printf("Failed to open log file: %v\n", err)
+		return
+	}
+	defer file.Close()
+
+	events := ctx.EventManager().Events()
+	for _, event := range events {
+		logEntry := fmt.Sprintf("Event Type: %s\n", event.Type)
+		for _, attr := range event.Attributes {
+			logEntry += fmt.Sprintf("  %s: %s\n", string(attr.Key), string(attr.Value))
+		}
+		logEntry += "\n"
+
+		if _, err := file.WriteString(logEntry); err != nil {
+			fmt.Printf("Failed to write to log file: %v\n", err)
+		}
+	}
 }
 
 // InstallCustomUpgradeHandlers sets upgrade handlers for all entries in the upgrades map.
