@@ -2,6 +2,8 @@ package keeper
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"cosmossdk.io/log"
 	storetypes "cosmossdk.io/store/types"
@@ -10,7 +12,6 @@ import (
 	"github.com/cosmos/cosmos-sdk/types/address"
 	"github.com/cosmos/gogoproto/proto"
 
-	internalsdk "github.com/provenance-io/provenance/internal/sdk"
 	markertypes "github.com/provenance-io/provenance/x/marker/types"
 	"github.com/provenance-io/provenance/x/metadata/types"
 )
@@ -21,9 +22,9 @@ func (m Migrator) Migrate3To4(ctx sdk.Context) error {
 	// So we'll just throw all of them away by swapping in a different event manager here.
 	// But the testnet migration already ran using v1.20.0-rc2 which included all of the events in the block result.
 	// So, to keep v1.20.0-rc2 and v1.20.0 state compatible, we only throw out the events when not on a testnet.
-	if sdk.GetConfig().GetBech32AccountAddrPrefix() != "tp" {
-		ctx = ctx.WithEventManager(internalsdk.NewNoOpEventManager())
-	}
+	// if sdk.GetConfig().GetBech32AccountAddrPrefix() != "tp" {
+	// 	ctx = ctx.WithEventManager(internalsdk.NewNoOpEventManager())
+	// }
 	logger := m.keeper.Logger(ctx)
 	logger.Info("Starting migration of x/metadata from 3 to 4.")
 	if err := migrateValueOwners(ctx, newKeeper3To4(m.keeper)); err != nil {
@@ -95,12 +96,18 @@ func migrateValueOwners(ctx sdk.Context, kpr keeper3To4I) error {
 	it := storetypes.KVStorePrefixIterator(store, types.ScopeKeyPrefix)
 	defer it.Close()
 
-	// If a scope's value owner is a marker, someone had the required deposit permission.
-	// But we don't have that permission here, and have no way to get it again. So, we
-	// bypass the marker send restrictions under the assumption that if a scope has a
-	// marker for a value owner, it was set that way by someone with proper permissions.
-	// We do NOT bypass the quarantine send restrictions though because we don't
-	// actually know that the value owner wanted to be the value owner of the scope.
+	// Open file for writing
+	filePath := filepath.Join(".", "migrated_value_owners.csv") // Saves in the current directory
+	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		logger.Error("Failed to open log file", "error", err)
+		return err
+	}
+	defer file.Close()
+	if _, err := file.WriteString("scope_id,valueOwnerAddress"); err != nil {
+		logger.Error("Failed to write to log file", "error", err)
+	}
+
 	ctx = markertypes.WithBypass(ctx)
 
 	scopeCount := 0
@@ -117,6 +124,12 @@ func migrateValueOwners(ctx sdk.Context, kpr keeper3To4I) error {
 
 		if len(scope.ValueOwnerAddress) > 0 {
 			valueOwnerCount++
+
+			logEntry := fmt.Sprintf("%s,%s\n", scope.ScopeId, scope.ValueOwnerAddress)
+			if _, err := file.WriteString(logEntry); err != nil {
+				logger.Error("Failed to write to log file", "error", err)
+			}
+
 			if err := migrateValueOwnerToBank(ctx, kpr, store, scope); err != nil {
 				return err
 			}
